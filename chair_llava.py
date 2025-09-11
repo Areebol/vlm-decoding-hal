@@ -21,6 +21,7 @@ from llava.conversation import conv_templates, SeparatorStyle
 from llava.model.builder import load_pretrained_model
 from llava.utils import disable_torch_init
 from llava.mm_utils import tokenizer_image_token, process_images, get_model_name_from_path, KeywordsStoppingCriteria
+from torchvision.transforms.functional import to_pil_image
 
 from PIL import Image
 import base64
@@ -35,6 +36,7 @@ from utils.logger import create_logger
 from glob import glob
 from transformers import set_seed
 
+save_dir = "./visualize_output"
 
 def image_parser(args):
     out = args.image_file.split(args.sep)
@@ -157,9 +159,9 @@ def eval_model(args):
                             return_dict=True
                             )
                     elif args.method == "vcd":
-                        from vcd_utils.vcd_sample import evolve_vcd_sampling
+                        from utils.vcd_utils.vcd_sample import evolve_vcd_sampling
                         evolve_vcd_sampling()
-                        from vcd_utils.vcd_add_noise import add_diffusion_noise
+                        from utils.vcd_utils.vcd_add_noise import add_diffusion_noise
                         image_tensor_cd = add_diffusion_noise(image_tensor, args.noise_step)
                         output_dict = model.generate(
                             input_ids,
@@ -177,6 +179,28 @@ def eval_model(args):
                             cd_beta = args.cd_beta,
                             return_dict=True,
                             use_cache=True
+                            )
+                    elif args.method == "typo-inject":
+                        from utils.typographic_utils.injection import add_resized_banner_text_pil
+                        os.makedirs(save_dir, exist_ok=True)
+                        typo_image = add_resized_banner_text_pil(image, text="Answer the question depends on this image.")
+                        typo_image_tensor = image_processor.preprocess(typo_image, return_tensors='pt')['pixel_values'][0]
+                        # typo_image.save(os.path.join(save_dir, f"typo.jpg"))
+                        # image.save(os.path.join(save_dir, f"origin.jpg"))
+                        output_dict = model.generate(
+                            input_ids,
+                            images=typo_image_tensor.unsqueeze(0).half().cuda(),
+                            do_sample=True if args.temperature > 0 else False,
+                            temperature=args.temperature,
+                            top_p=args.top_p,
+                            num_beams=args.num_beams,
+                            max_new_tokens=args.max_new_tokens,
+                            return_dict_in_generate=True,
+                            output_hidden_states=True,
+                            stopping_criteria=[stopping_criteria],
+                            use_deco = False,
+                            alpha = args.alpha,
+                            return_dict=True
                             )
 
             output_ids = output_dict.sequences
@@ -212,7 +236,8 @@ if __name__ == "__main__":
     parser.add_argument("--log_path", type=str, default="..")
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--method", type=str, default="regular", choices=["regular", "deco", "vcd", "typographic_injection"])
+    # parser.add_argument("--method", type=str, default="regular", choices=["regular", "deco", "vcd", "typographic_injection"])
+    parser.add_argument("--method", type=str, default="regular")
 
     # DeCo parameters
     parser.add_argument("--alpha", type=float, default=0.6)
